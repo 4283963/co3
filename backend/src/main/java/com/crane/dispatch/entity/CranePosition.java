@@ -20,6 +20,8 @@ public class CranePosition {
     @Column(nullable = false)
     private Double speed;
 
+    private Double targetPosition;
+
     private LocalDateTime updatedAt;
 
     public CranePosition() {}
@@ -28,6 +30,7 @@ public class CranePosition {
         this.craneId = craneId;
         this.position = position;
         this.speed = speed;
+        this.targetPosition = position;
         this.updatedAt = LocalDateTime.now();
     }
 
@@ -42,6 +45,9 @@ public class CranePosition {
 
     public Double getSpeed() { return speed; }
     public void setSpeed(Double speed) { this.speed = speed; }
+
+    public Double getTargetPosition() { return targetPosition; }
+    public void setTargetPosition(Double targetPosition) { this.targetPosition = targetPosition; }
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }

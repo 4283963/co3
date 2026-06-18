@@ -19,7 +19,7 @@ import java.util.stream.Collectors;
 @Service
 public class CraneDispatchService {
 
-    private static final double SAFE_DISTANCE = 10.0;
+    private static final double SAFE_DISTANCE = 5.0;
     private static final double TRACK_LENGTH = 100.0;
     private static final double CRANE_SPEED = 2.0;
 
@@ -82,21 +82,31 @@ public class CraneDispatchService {
             throw new IllegalArgumentException("目标位置超出轨道范围(0-" + TRACK_LENGTH + "米)");
         }
 
-        CollisionWarningDto collision = checkCollisionWithTarget(request.getCraneId(), request.getTargetPosition());
-        if (!collision.isSafe()) {
-            throw new IllegalStateException(collision.getMessage());
-        }
-
-        CranePosition crane = positionRepository.findByCraneId(request.getCraneId())
+        CranePosition thisCrane = positionRepository.findByCraneId(request.getCraneId())
                 .orElseThrow(() -> new IllegalArgumentException("行车 " + request.getCraneId() + " 不存在"));
 
-        double distance = Math.abs(request.getTargetPosition() - crane.getPosition());
-        double moveTime = distance / CRANE_SPEED;
+        String otherCraneId = "A".equals(request.getCraneId()) ? "B" : "A";
+        CranePosition otherCrane = positionRepository.findByCraneId(otherCraneId).orElse(null);
 
-        crane.setPosition(request.getTargetPosition());
-        crane.setSpeed(0.0);
-        crane.setUpdatedAt(LocalDateTime.now());
-        positionRepository.save(crane);
+        if (otherCrane != null) {
+            double thisStart = thisCrane.getPosition();
+            double thisEnd = request.getTargetPosition();
+            double otherStart = otherCrane.getPosition();
+            double otherEnd = otherCrane.getTargetPosition() != null ? otherCrane.getTargetPosition() : otherCrane.getPosition();
+
+            if (hasCollisionRisk(thisStart, thisEnd, otherStart, otherEnd)) {
+                throw new IllegalStateException("指令冲突：有相撞风险！");
+            }
+
+            if (Math.abs(thisEnd - otherEnd) < SAFE_DISTANCE) {
+                throw new IllegalStateException("指令冲突：两台车终点距离小于安全距离（" + SAFE_DISTANCE + "米）");
+            }
+        }
+
+        thisCrane.setTargetPosition(request.getTargetPosition());
+        thisCrane.setSpeed(CRANE_SPEED);
+        thisCrane.setUpdatedAt(LocalDateTime.now());
+        positionRepository.save(thisCrane);
 
         CraneTask task = new CraneTask(
                 request.getCraneId(),
@@ -109,36 +119,61 @@ public class CraneDispatchService {
         return taskRepository.save(task);
     }
 
-    private CollisionWarningDto checkCollisionWithTarget(String craneId, double targetPosition) {
-        String otherCraneId = "A".equals(craneId) ? "B" : "A";
-        CranePosition otherCrane = positionRepository.findByCraneId(otherCraneId).orElse(null);
-
-        CollisionWarningDto warning = new CollisionWarningDto();
-
-        if (otherCrane == null) {
-            warning.setSafe(true);
-            return warning;
+    private boolean hasCollisionRisk(double aStart, double aEnd, double bStart, double bEnd) {
+        if (Math.abs(aStart - bStart) < SAFE_DISTANCE) {
+            return true;
         }
 
-        double distance = Math.abs(targetPosition - otherCrane.getPosition());
-        warning.setDistance(distance);
+        double aMin = Math.min(aStart, aEnd);
+        double aMax = Math.max(aStart, aEnd);
+        double bMin = Math.min(bStart, bEnd);
+        double bMax = Math.max(bStart, bEnd);
 
-        if ("A".equals(craneId)) {
-            warning.setCraneAPosition(targetPosition);
-            warning.setCraneBPosition(otherCrane.getPosition());
-        } else {
-            warning.setCraneAPosition(otherCrane.getPosition());
-            warning.setCraneBPosition(targetPosition);
+        double overlapStart = Math.max(aMin, bMin);
+        double overlapEnd = Math.min(aMax, bMax);
+
+        if (overlapStart <= overlapEnd) {
+            boolean aStartsLeft = aStart < bStart;
+            boolean aEndsLeft = aEnd < bEnd;
+
+            if (aStartsLeft != aEndsLeft) {
+                return true;
+            }
+
+            double aDir = Math.signum(aEnd - aStart);
+            double bDir = Math.signum(bEnd - bStart);
+
+            if (aDir == bDir && aDir != 0) {
+                if (aStartsLeft && aEnd > bStart) {
+                    return true;
+                }
+                if (!aStartsLeft && bEnd > aStart) {
+                    return true;
+                }
+            }
+
+            if (overlapEnd - overlapStart < SAFE_DISTANCE) {
+                return true;
+            }
         }
 
-        if (distance < SAFE_DISTANCE) {
-            warning.setSafe(false);
-            warning.setMessage("⚠ 调度被拒绝！行车" + craneId + "目标位置与行车" + otherCraneId + "距离过近（" + String.format("%.1f", distance) + "米），安全距离为" + SAFE_DISTANCE + "米");
-        } else {
-            warning.setSafe(true);
+        double aRange = aMax - aMin;
+        double bRange = bMax - bMin;
+        double maxRange = Math.max(aRange, bRange);
+
+        if (maxRange > 0) {
+            int steps = 100;
+            for (int i = 0; i <= steps; i++) {
+                double t = (double) i / steps;
+                double aPos = aStart + (aEnd - aStart) * t;
+                double bPos = bStart + (bEnd - bStart) * t;
+                if (Math.abs(aPos - bPos) < SAFE_DISTANCE) {
+                    return true;
+                }
+            }
         }
 
-        return warning;
+        return false;
     }
 
     public List<CraneTask> getTaskHistory(String craneId) {
@@ -152,6 +187,7 @@ public class CraneDispatchService {
         return new CranePositionDto(
                 pos.getCraneId(),
                 pos.getPosition(),
+                pos.getTargetPosition(),
                 pos.getSpeed(),
                 pos.getUpdatedAt() != null ? pos.getUpdatedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) : null
         );

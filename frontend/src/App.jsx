@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback } from 'react'
 
 const API_BASE = 'http://localhost:8080/api'
 const TRACK_LENGTH = 100
-const SAFE_DISTANCE = 10
+const SAFE_DISTANCE = 5
 
 function App() {
   const [positions, setPositions] = useState({ A: 0, B: 100 })
+  const [targets, setTargets] = useState({ A: 0, B: 100 })
   const [collision, setCollision] = useState({ safe: true, message: '', distance: 100 })
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(false)
@@ -19,12 +20,18 @@ function App() {
       const res = await fetch(`${API_BASE}/positions`)
       const data = await res.json()
       const posMap = {}
+      const targetMap = {}
       data.forEach(item => {
         posMap[item.craneId] = item.position
+        targetMap[item.craneId] = item.targetPosition !== undefined ? item.targetPosition : item.position
       })
       setPositions(prev => ({
         A: posMap.A !== undefined ? posMap.A : prev.A,
         B: posMap.B !== undefined ? posMap.B : prev.B,
+      }))
+      setTargets(prev => ({
+        A: targetMap.A !== undefined ? targetMap.A : prev.A,
+        B: targetMap.B !== undefined ? targetMap.B : prev.B,
       }))
     } catch {
       // backend not available, keep existing positions
@@ -116,6 +123,8 @@ function App() {
   const distance = Math.abs(positions.A - positions.B)
   const isDanger = distance < SAFE_DISTANCE
 
+  const isMoving = (craneId) => Math.abs(positions[craneId] - targets[craneId]) > 0.1
+
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4 md:p-8">
       <div className="max-w-5xl mx-auto">
@@ -126,7 +135,6 @@ function App() {
           实时监控两台行车在轨道上的位置，防止碰撞事故
         </p>
 
-        {/* Collision Warning Banner */}
         {!collision.safe && (
           <div className="mb-6 p-4 bg-red-900/80 border-2 border-red-500 rounded-xl text-center animate-pulse">
             <span className="text-xl font-bold">🚨 {collision.message}</span>
@@ -148,7 +156,6 @@ function App() {
           <h2 className="text-xl font-semibold mb-4">轨道实时视图</h2>
 
           <div className="relative mx-4 my-8">
-            {/* Track background */}
             <div className="relative h-20 bg-gray-700 rounded-full overflow-visible">
               {/* Distance markers */}
               {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map(meter => (
@@ -184,6 +191,52 @@ function App() {
                 ></div>
               )}
 
+              {/* Crane A target line (dashed path) */}
+              {isMoving('A') && (
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 h-1 border-t-2 border-dashed border-blue-400 opacity-60"
+                  style={{
+                    left: `${posToPercent(Math.min(positions.A, targets.A))}%`,
+                    width: `${posToPercent(Math.max(positions.A, targets.A)) - posToPercent(Math.min(positions.A, targets.A))}%`,
+                  }}
+                ></div>
+              )}
+
+              {/* Crane B target line (dashed path) */}
+              {isMoving('B') && (
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 h-1 border-t-2 border-dashed border-orange-400 opacity-60"
+                  style={{
+                    left: `${posToPercent(Math.min(positions.B, targets.B))}%`,
+                    width: `${posToPercent(Math.max(positions.B, targets.B)) - posToPercent(Math.min(positions.B, targets.B))}%`,
+                  }}
+                ></div>
+              )}
+
+              {/* Crane A target marker */}
+              {isMoving('A') && (
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-5"
+                  style={{ left: `${posToPercent(targets.A)}%` }}
+                >
+                  <div className="w-6 h-6 border-2 border-dashed border-blue-400 rounded flex items-center justify-center text-xs text-blue-400">
+                    🎯
+                  </div>
+                </div>
+              )}
+
+              {/* Crane B target marker */}
+              {isMoving('B') && (
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-5"
+                  style={{ left: `${posToPercent(targets.B)}%` }}
+                >
+                  <div className="w-6 h-6 border-2 border-dashed border-orange-400 rounded flex items-center justify-center text-xs text-orange-400">
+                    🎯
+                  </div>
+                </div>
+              )}
+
               {/* Crane A */}
               <div
                 className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-10 transition-all duration-700 ease-in-out"
@@ -209,14 +262,18 @@ function App() {
           </div>
 
           {/* Status Info */}
-          <div className="flex justify-center gap-8 mt-10 text-sm">
+          <div className="flex flex-wrap justify-center gap-6 mt-10 text-sm">
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 bg-blue-600 rounded"></div>
-              <span>A 行车: <strong>{positions.A.toFixed(1)} m</strong></span>
+              <span>A 行车: <strong>{positions.A.toFixed(1)} m</strong>
+                {isMoving('A') && <span className="text-blue-400 ml-1">→ 🎯 {targets.A.toFixed(1)} m</span>}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 bg-orange-600 rounded"></div>
-              <span>B 行车: <strong>{positions.B.toFixed(1)} m</strong></span>
+              <span>B 行车: <strong>{positions.B.toFixed(1)} m</strong>
+                {isMoving('B') && <span className="text-orange-400 ml-1">→ 🎯 {targets.B.toFixed(1)} m</span>}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <div className={`w-4 h-4 ${isDanger ? 'bg-red-500' : 'bg-green-500'} rounded`}></div>
