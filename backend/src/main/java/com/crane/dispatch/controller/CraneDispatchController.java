@@ -3,6 +3,7 @@ package com.crane.dispatch.controller;
 import com.crane.dispatch.dto.CollisionWarningDto;
 import com.crane.dispatch.dto.CranePositionDto;
 import com.crane.dispatch.dto.DispatchTaskRequest;
+import com.crane.dispatch.dto.HistoryPointDto;
 import com.crane.dispatch.entity.CraneTask;
 import com.crane.dispatch.service.CraneDispatchService;
 import org.springframework.http.ResponseEntity;
@@ -46,5 +47,10 @@ public class CraneDispatchController {
     @GetMapping("/tasks")
     public List<CraneTask> getTasks(@RequestParam(required = false) String craneId) {
         return service.getTaskHistory(craneId);
+    }
+
+    @GetMapping("/v1/crane/history")
+    public List<HistoryPointDto> getHistory(@RequestParam(required = false, defaultValue = "10") Integer minutes) {
+        return service.getPositionHistory(minutes);
     }
 }

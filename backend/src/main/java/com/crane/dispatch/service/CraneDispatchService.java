@@ -3,8 +3,11 @@ package com.crane.dispatch.service;
 import com.crane.dispatch.dto.CollisionWarningDto;
 import com.crane.dispatch.dto.CranePositionDto;
 import com.crane.dispatch.dto.DispatchTaskRequest;
+import com.crane.dispatch.dto.HistoryPointDto;
 import com.crane.dispatch.entity.CranePosition;
+import com.crane.dispatch.entity.CranePositionHistory;
 import com.crane.dispatch.entity.CraneTask;
+import com.crane.dispatch.repository.CranePositionHistoryRepository;
 import com.crane.dispatch.repository.CranePositionRepository;
 import com.crane.dispatch.repository.CraneTaskRepository;
 import jakarta.annotation.PostConstruct;
@@ -25,20 +28,28 @@ public class CraneDispatchService {
 
     private final CranePositionRepository positionRepository;
     private final CraneTaskRepository taskRepository;
+    private final CranePositionHistoryRepository historyRepository;
 
     public CraneDispatchService(CranePositionRepository positionRepository,
-                                CraneTaskRepository taskRepository) {
+                                CraneTaskRepository taskRepository,
+                                CranePositionHistoryRepository historyRepository) {
         this.positionRepository = positionRepository;
         this.taskRepository = taskRepository;
+        this.historyRepository = historyRepository;
     }
 
     @PostConstruct
     public void init() {
+        LocalDateTime now = LocalDateTime.now();
         if (positionRepository.findByCraneId("A").isEmpty()) {
-            positionRepository.save(new CranePosition("A", 0.0, 0.0));
+            CranePosition pos = new CranePosition("A", 0.0, 0.0);
+            positionRepository.save(pos);
+            historyRepository.save(new CranePositionHistory("A", 0.0, 0.0, now));
         }
         if (positionRepository.findByCraneId("B").isEmpty()) {
-            positionRepository.save(new CranePosition("B", 100.0, 0.0));
+            CranePosition pos = new CranePosition("B", 100.0, 0.0);
+            positionRepository.save(pos);
+            historyRepository.save(new CranePositionHistory("B", 100.0, 0.0, now));
         }
     }
 
@@ -103,9 +114,27 @@ public class CraneDispatchService {
             }
         }
 
-        thisCrane.setTargetPosition(request.getTargetPosition());
-        thisCrane.setSpeed(CRANE_SPEED);
-        thisCrane.setUpdatedAt(LocalDateTime.now());
+        double startPos = thisCrane.getPosition();
+        double endPos = request.getTargetPosition();
+        double distance = Math.abs(endPos - startPos);
+        double totalSeconds = distance / CRANE_SPEED;
+
+        LocalDateTime startTime = LocalDateTime.now();
+        int totalSecondsInt = (int) Math.max(1, Math.ceil(totalSeconds));
+        for (int i = 0; i <= totalSecondsInt; i++) {
+            double ratio = Math.min(1.0, (double) i / totalSeconds);
+            double pos = startPos + (endPos - startPos) * ratio;
+            double speed = (i == 0 || i >= totalSeconds) ? 0.0 : CRANE_SPEED;
+            LocalDateTime time = startTime.plusSeconds(i);
+            historyRepository.save(new CranePositionHistory(
+                    request.getCraneId(), pos, speed, time
+            ));
+        }
+
+        thisCrane.setPosition(endPos);
+        thisCrane.setTargetPosition(endPos);
+        thisCrane.setSpeed(0.0);
+        thisCrane.setUpdatedAt(startTime.plusSeconds((long) totalSeconds));
         positionRepository.save(thisCrane);
 
         CraneTask task = new CraneTask(
@@ -115,7 +144,7 @@ public class CraneDispatchService {
                 request.getDescription()
         );
         task.setStatus("COMPLETED");
-        task.setCompletedAt(LocalDateTime.now());
+        task.setCompletedAt(startTime.plusSeconds((long) totalSeconds));
         return taskRepository.save(task);
     }
 
@@ -174,6 +203,26 @@ public class CraneDispatchService {
         }
 
         return false;
+    }
+
+    public List<HistoryPointDto> getPositionHistory(Integer minutes) {
+        int mins = minutes != null ? minutes : 10;
+        LocalDateTime endTime = LocalDateTime.now();
+        LocalDateTime startTime = endTime.minusMinutes(mins);
+
+        return historyRepository.findByTimestampBetweenOrderByTimestampAsc(startTime, endTime)
+                .stream()
+                .map(this::toHistoryDto)
+                .collect(Collectors.toList());
+    }
+
+    private HistoryPointDto toHistoryDto(CranePositionHistory h) {
+        return new HistoryPointDto(
+                h.getCraneId(),
+                h.getPosition(),
+                h.getSpeed(),
+                h.getTimestamp().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        );
     }
 
     public List<CraneTask> getTaskHistory(String craneId) {
